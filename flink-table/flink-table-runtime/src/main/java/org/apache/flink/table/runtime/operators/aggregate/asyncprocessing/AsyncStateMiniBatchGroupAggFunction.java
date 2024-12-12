@@ -1,3 +1,4 @@
+
 /*
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -16,12 +17,14 @@
  * limitations under the License.
  */
 
-package org.apache.flink.table.runtime.operators.aggregate;
+package org.apache.flink.table.runtime.operators.aggregate.asyncprocessing;
 
 import org.apache.flink.api.common.state.StateTtlConfig;
-import org.apache.flink.api.common.state.ValueState;
-import org.apache.flink.api.common.state.ValueStateDescriptor;
+import org.apache.flink.api.common.state.v2.StateFuture;
+import org.apache.flink.api.common.state.v2.ValueState;
+import org.apache.flink.runtime.state.v2.ValueStateDescriptor;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
+import org.apache.flink.streaming.api.operators.StreamingRuntimeContext;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.data.utils.JoinedRowData;
 import org.apache.flink.table.runtime.context.ExecutionContext;
@@ -30,6 +33,7 @@ import org.apache.flink.table.runtime.generated.AggsHandleFunction;
 import org.apache.flink.table.runtime.generated.GeneratedAggsHandleFunction;
 import org.apache.flink.table.runtime.generated.GeneratedRecordEqualiser;
 import org.apache.flink.table.runtime.generated.RecordEqualiser;
+import org.apache.flink.table.runtime.operators.aggregate.RecordCounter;
 import org.apache.flink.table.runtime.operators.aggregate.utils.MiniBatchGroupAggHelper;
 import org.apache.flink.table.runtime.operators.bundle.MapBundleFunction;
 import org.apache.flink.table.runtime.typeutils.InternalSerializers;
@@ -48,14 +52,14 @@ import java.util.Map;
 import static org.apache.flink.table.runtime.util.StateConfigUtil.createTtlConfig;
 
 /**
- * Aggregate Function used for the groupby (without window) aggregate in miniBatch mode with sync state api.
+ * Aggregate Function used for the groupby (without window) aggregate in miniBatch mode with async state api.
  *
  * <p>This function buffers input row in heap HashMap, and aggregates them when minibatch invoked.
  */
-public class MiniBatchGroupAggFunction
+public class AsyncStateMiniBatchGroupAggFunction
         extends MapBundleFunction<RowData, List<RowData>, RowData, RowData> {
 
-    private static final long serialVersionUID = 7455939331036508477L;
+    private static final long serialVersionUID = 1L;
 
     /** The code generated function used to handle aggregates. */
     private final GeneratedAggsHandleFunction genAggsHandler;
@@ -93,10 +97,10 @@ public class MiniBatchGroupAggFunction
     // stores the accumulators
     private transient ValueState<RowData> accState = null;
 
-    private transient SyncStateMiniBatchGroupAggHelper aggHelper = null;
+    private transient AsyncStateMiniBatchGroupAggHelper aggHelper = null;
 
     /**
-     * Creates a {@link MiniBatchGroupAggFunction}.
+     * Creates a {@link org.apache.flink.table.runtime.operators.aggregate.MiniBatchGroupAggFunction}.
      *
      * @param genAggsHandler The code generated function used to handle aggregates.
      * @param genRecordEqualiser The code generated equaliser used to equal RowData.
@@ -108,7 +112,7 @@ public class MiniBatchGroupAggFunction
      * @param generateUpdateBefore Whether this operator will generate UPDATE_BEFORE messages.
      * @param stateRetentionTime state idle retention time which unit is MILLISECONDS.
      */
-    public MiniBatchGroupAggFunction(
+    public AsyncStateMiniBatchGroupAggFunction(
             GeneratedAggsHandleFunction genAggsHandler,
             GeneratedRecordEqualiser genRecordEqualiser,
             LogicalType[] accTypes,
@@ -141,12 +145,12 @@ public class MiniBatchGroupAggFunction
         if (ttlConfig.isEnabled()) {
             accDesc.enableTimeToLive(ttlConfig);
         }
-        accState = ctx.getRuntimeContext().getState(accDesc);
+        accState = ((StreamingRuntimeContext) ctx.getRuntimeContext()).getValueState(accDesc);
 
         inputRowSerializer = InternalSerializers.create(inputType);
 
         resultRow = new JoinedRowData();
-        aggHelper = new SyncStateMiniBatchGroupAggHelper();
+        aggHelper = new AsyncStateMiniBatchGroupAggHelper();
     }
 
     @Override
@@ -163,15 +167,27 @@ public class MiniBatchGroupAggFunction
     @Override
     public void finishBundle(Map<RowData, List<RowData>> buffer, Collector<RowData> out)
             throws Exception {
+        try {
+            Thread.sleep(5000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        // System.out.println("async num: " + buffer.size());
         for (Map.Entry<RowData, List<RowData>> entry : buffer.entrySet()) {
             RowData currentKey = entry.getKey();
             List<RowData> inputRows = entry.getValue();
+            // System.out.println("async currentKey: " + currentKey.getInt(0) + ", size: " + inputRows.size());
+            // System.out.println(inputRows.get(0).getString(0) + ", " + inputRows.get(0).getInt(1));
 
             // step 1: get the accumulator for the current key
             // set current key to access state under the key
             ctx.setCurrentKey(currentKey);
-            RowData acc = accState.value();
-            this.aggHelper.processAggregate(acc, inputRows, currentKey, out);
+            // RowData acc = accState.value();
+            // this.aggHelper.processAggregate(acc, inputRows, currentKey, out);
+            StateFuture<RowData> accFuture = accState.asyncValue();
+            accFuture.thenAccept(acc -> {
+                this.aggHelper.processAggregate(acc, inputRows, currentKey, out);
+            });
         }
     }
 
@@ -182,8 +198,8 @@ public class MiniBatchGroupAggFunction
         }
     }
 
-    private class SyncStateMiniBatchGroupAggHelper extends MiniBatchGroupAggHelper {
-        public SyncStateMiniBatchGroupAggHelper() {
+    private class AsyncStateMiniBatchGroupAggHelper extends MiniBatchGroupAggHelper {
+        public AsyncStateMiniBatchGroupAggHelper() {
             super(recordCounter, resultRow, function);
         }
 
@@ -204,33 +220,36 @@ public class MiniBatchGroupAggFunction
             // we aggregated at least one record for this key
 
             // update acc to state
-            accState.update(acc);
+            // accState.update(acc);
+            StateFuture<Void> updateAccFuture = accState.asyncUpdate(acc);
 
             // if this was not the first row and we have to emit retractions
-            if (!firstRow) {
-                if (stateRetentionTime > 0 || !equaliser.equals(prevAggValue, newAggValue)) {
-                    // new row is not same with prev row
-                    if (generateUpdateBefore) {
-                        // prepare UPDATE_BEFORE message for previous row
-                        resultRow
-                                .replace(currentKey, prevAggValue)
-                                .setRowKind(RowKind.UPDATE_BEFORE);
-                        // System.out.println("sync send1: " + resultRow.getInt(0) + ", " + resultRow.getString(1));
+            updateAccFuture.thenAccept(VOID -> {
+                if (!firstRow) {
+                    if (stateRetentionTime > 0 || !equaliser.equals(prevAggValue, newAggValue)) {
+                        // new row is not same with prev row
+                        if (generateUpdateBefore) {
+                            // prepare UPDATE_BEFORE message for previous row
+                            resultRow
+                                    .replace(currentKey, prevAggValue)
+                                    .setRowKind(RowKind.UPDATE_BEFORE);
+                            // System.out.println("async send1: " + resultRow.getInt(0) + ", " + resultRow.getString(1));
+                            out.collect(resultRow);
+                        }
+                        // prepare UPDATE_AFTER message for new row
+                        resultRow.replace(currentKey, newAggValue).setRowKind(RowKind.UPDATE_AFTER);
+                        // System.out.println("async send2: " + resultRow.getInt(0) + ", " + resultRow.getString(1));
                         out.collect(resultRow);
                     }
-                    // prepare UPDATE_AFTER message for new row
-                    resultRow.replace(currentKey, newAggValue).setRowKind(RowKind.UPDATE_AFTER);
-                    // System.out.println("sync send2: " + resultRow.getInt(0) + ", " + resultRow.getString(1));
+                    // new row is same with prev row, no need to output
+                } else {
+                    // this is the first, output new result
+                    // prepare INSERT message for new row
+                    resultRow.replace(currentKey, newAggValue).setRowKind(RowKind.INSERT);
+                    // System.out.println("async send3: " + resultRow.getInt(0) + ", " + resultRow.getString(1));
                     out.collect(resultRow);
                 }
-                // new row is same with prev row, no need to output
-            } else {
-                // this is the first, output new result
-                // prepare INSERT message for new row
-                resultRow.replace(currentKey, newAggValue).setRowKind(RowKind.INSERT);
-                // System.out.println("sync send3: " + resultRow.getInt(0) + ", " + resultRow.getString(1));
-                out.collect(resultRow);
-            }
+            });
         }
     }
 }

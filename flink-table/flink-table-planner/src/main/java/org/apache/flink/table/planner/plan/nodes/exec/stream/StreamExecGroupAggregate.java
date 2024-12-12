@@ -47,7 +47,9 @@ import org.apache.flink.table.runtime.generated.GeneratedRecordEqualiser;
 import org.apache.flink.table.runtime.keyselector.RowDataKeySelector;
 import org.apache.flink.table.runtime.operators.aggregate.GroupAggFunction;
 import org.apache.flink.table.runtime.operators.aggregate.MiniBatchGroupAggFunction;
+import org.apache.flink.table.runtime.operators.aggregate.asyncprocessing.AsyncStateMiniBatchGroupAggFunction;
 import org.apache.flink.table.runtime.operators.bundle.KeyedMapBundleOperator;
+import org.apache.flink.table.runtime.operators.bundle.asyncprocessing.AsyncStateKeyedMapBundleOperator;
 import org.apache.flink.table.runtime.types.LogicalTypeDataTypeConverter;
 import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
 import org.apache.flink.table.types.logical.LogicalType;
@@ -227,21 +229,37 @@ public class StreamExecGroupAggregate extends StreamExecAggregateBase {
                         .generateRecordEqualiser("GroupAggValueEqualiser");
         final int inputCountIndex = aggInfoList.getIndexOfCountStar();
         final boolean isMiniBatchEnabled = MinibatchUtil.isMiniBatchEnabled(config);
+        final boolean enableAsyncState = AggregateUtil.enableAsyncState(config, aggInfoList);
 
         final OneInputStreamOperator<RowData, RowData> operator;
         if (isMiniBatchEnabled) {
-            MiniBatchGroupAggFunction aggFunction =
-                    new MiniBatchGroupAggFunction(
-                            aggsHandler,
-                            recordEqualiser,
-                            accTypes,
-                            inputRowType,
-                            inputCountIndex,
-                            generateUpdateBefore,
-                            stateRetentionTime);
-            operator =
-                    new KeyedMapBundleOperator<>(
-                            aggFunction, MinibatchUtil.createMiniBatchTrigger(config));
+            if (enableAsyncState) {
+                AsyncStateMiniBatchGroupAggFunction aggFunction =
+                        new AsyncStateMiniBatchGroupAggFunction(
+                                aggsHandler,
+                                recordEqualiser,
+                                accTypes,
+                                inputRowType,
+                                inputCountIndex,
+                                generateUpdateBefore,
+                                stateRetentionTime);
+                operator =
+                        new AsyncStateKeyedMapBundleOperator<>(
+                                aggFunction, MinibatchUtil.createMiniBatchTrigger(config));
+            } else {
+                MiniBatchGroupAggFunction aggFunction =
+                        new MiniBatchGroupAggFunction(
+                                aggsHandler,
+                                recordEqualiser,
+                                accTypes,
+                                inputRowType,
+                                inputCountIndex,
+                                generateUpdateBefore,
+                                stateRetentionTime);
+                operator =
+                        new KeyedMapBundleOperator<>(
+                                aggFunction, MinibatchUtil.createMiniBatchTrigger(config));
+            }
         } else {
             GroupAggFunction aggFunction =
                     new GroupAggFunction(

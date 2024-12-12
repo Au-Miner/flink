@@ -16,20 +16,29 @@
  * limitations under the License.
  */
 
-package org.apache.flink.table.runtime.operators.bundle;
+package org.apache.flink.table.runtime.operators.bundle.asyncprocessing;
 
+import org.apache.commons.math3.analysis.function.Log;
+
+import org.apache.flink.annotation.Internal;
 import org.apache.flink.api.common.functions.util.FunctionUtils;
 import org.apache.flink.metrics.Gauge;
-import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
+import org.apache.flink.runtime.asyncprocessing.operators.AbstractAsyncStateStreamOperator;
+import org.apache.flink.runtime.asyncprocessing.operators.AbstractAsyncStateStreamOperatorV2;
+import org.apache.flink.runtime.asyncprocessing.operators.AbstractAsyncStateUdfStreamOperator;
 import org.apache.flink.streaming.api.operators.OneInputStreamOperator;
 import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.table.data.binary.BinaryRowData;
 import org.apache.flink.table.runtime.context.ExecutionContextImpl;
+import org.apache.flink.table.runtime.operators.bundle.MapBundleFunction;
 import org.apache.flink.table.runtime.operators.bundle.trigger.BundleTrigger;
 import org.apache.flink.table.runtime.operators.bundle.trigger.BundleTriggerCallback;
 import org.apache.flink.table.runtime.util.StreamRecordCollector;
 import org.apache.flink.util.Collector;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -37,7 +46,7 @@ import java.util.Map;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
- * The {@link AbstractMapBundleOperator} simply used a java Map to store the input elements in
+ * The {@link AbstractAsyncStateMapBundleOperator} simply used a java Map to store the input elements in
  * key-value form. The map key is typically the same with the state key, so we can do some
  * optimizations before accessing states, like pre aggregate values for each key. And we will only
  * need to access state every key we have, but not every element we processed.
@@ -50,10 +59,15 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  * @param <IN> Input type for the operator.
  * @param <OUT> Output type for the operator.
  */
-public abstract class AbstractMapBundleOperator<K, V, IN, OUT> extends AbstractStreamOperator<OUT>
+// public abstract class AbstractAsyncStateMapBundleOperator<K, V, IN, OUT> extends AbstractAsyncStateStreamOperator<OUT>
+@Internal
+public abstract class AbstractAsyncStateMapBundleOperator<K, V, IN, OUT> extends AbstractAsyncStateStreamOperator<OUT>
         implements OneInputStreamOperator<IN, OUT>, BundleTriggerCallback {
 
-    private static final long serialVersionUID = 5081841938324118594L;
+    private static final long serialVersionUID = 1L;
+
+    /** The logger used by the operator class and its subclasses. */
+    protected static final Logger LOG = LoggerFactory.getLogger(AbstractAsyncStateMapBundleOperator.class);
 
     /** The map in heap to store elements. */
     private transient Map<K, V> bundle;
@@ -69,7 +83,7 @@ public abstract class AbstractMapBundleOperator<K, V, IN, OUT> extends AbstractS
 
     private transient int numOfElements = 0;
 
-    AbstractMapBundleOperator(
+    AbstractAsyncStateMapBundleOperator(
             MapBundleFunction<K, V, IN, OUT> function, BundleTrigger<IN> bundleTrigger) {
         this.function = checkNotNull(function, "function is null");
         this.bundleTrigger = checkNotNull(bundleTrigger, "bundleTrigger is null");
@@ -110,7 +124,7 @@ public abstract class AbstractMapBundleOperator<K, V, IN, OUT> extends AbstractS
 
     @Override
     public void processElement(StreamRecord<IN> element) throws Exception {
-        System.out.println("sync: " + ((BinaryRowData) element.getValue()).getString(0) + ", " + ((BinaryRowData) element.getValue()).getInt(1));
+        System.out.println("async: " + ((BinaryRowData) element.getValue()).getString(0) + ", " + ((BinaryRowData) element.getValue()).getInt(1));
         // get the key and value for the map bundle
         final IN input = element.getValue();
         final K bundleKey = getKey(input);
