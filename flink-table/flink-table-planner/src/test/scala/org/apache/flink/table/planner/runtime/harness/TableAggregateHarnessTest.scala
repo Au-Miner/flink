@@ -124,6 +124,7 @@ class TableAggregateHarnessTest(mode: StateBackendMode) extends HarnessTestBase(
     testHarness.open()
     val expectedOutput = new ConcurrentLinkedQueue[Object]()
 
+
     // set TtlTimeProvider with 1
     testHarness.setStateTtlProcessingTime(1)
 
