@@ -77,9 +77,12 @@ public class RecordsBuffer<ELEMENT, KEY> {
         }
         blockingSize--;
         if (blockingBuffer.get(key).isEmpty()) {
+            int size = blockingBuffer.get(key).size();
+            System.out.println("准备从blockingBuffer中移出一条数据，数据个数从" + size + "变为" + (size - 1));
             blockingBuffer.remove(key);
         }
         activeBuffer.put(key, element);
+        System.out.println("从activeBuffer中添加一条数据，此时activeBuffer长度为" + activeBuffer.size());
         return Optional.of(element);
     }
 

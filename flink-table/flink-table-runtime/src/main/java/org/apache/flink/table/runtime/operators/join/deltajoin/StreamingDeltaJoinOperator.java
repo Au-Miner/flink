@@ -269,7 +269,7 @@ public class StreamingDeltaJoinOperator
         // 1. aec metrics
         asyncExecutionController.registerMetrics(getRuntimeContext().getMetricGroup());
         // 2. delta-join operator metrics
-        System.out.println("准备初始化totalInflightNum");
+        System.out.println("准备初始化totalInflightNum，此时totalInflightNum的值为: " + totalInflightNum.get());
         getRuntimeContext()
                 .getMetricGroup()
                 .gauge(METRIC_DELTA_JOIN_OP_TOTAL_IN_FLIGHT_NUM, totalInflightNum::get);
@@ -291,6 +291,7 @@ public class StreamingDeltaJoinOperator
         // We cannot move the following code to #initializeState because they depend on
         // resultHandlerBuffer
         List<Object> keys = getAllStateKeys();
+        System.out.println("keys的长度为" + keys.size());
         for (Object key : keys) {
             setCurrentKey(key);
             triggerRecoveryProcess();
@@ -394,6 +395,7 @@ public class StreamingDeltaJoinOperator
 
         Map<RowData, Deque<AecRecord<RowData, RowData>>> pendingElements =
                 asyncExecutionController.pendingElements();
+        System.out.println("pendingElements剩余的数据个数为" + pendingElements.size());
         for (Map.Entry<RowData, Deque<AecRecord<RowData, RowData>>> entry :
                 pendingElements.entrySet()) {
             RowData key = entry.getKey();
@@ -418,6 +420,7 @@ public class StreamingDeltaJoinOperator
                                     aecRecord.getInputIndex()));
                 }
             }
+            System.out.println("recoveredStreamElements中准备存" + storedData);
             recoveredStreamElements.update(storedData);
         }
         return super.snapshotState(checkpointId, timestamp, checkpointOptions, factory);
@@ -481,6 +484,7 @@ public class StreamingDeltaJoinOperator
             mailboxExecutor.yield();
             System.out.println("等待完毕");
         }
+        System.out.println("结束当前这一轮");
     }
 
     @VisibleForTesting
