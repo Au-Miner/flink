@@ -355,6 +355,7 @@ class DeltaJoinITCase extends StreamingTestBase {
   def testFailOverAndRestore(): Unit = {
     // enable checkpoint, we are using failing source to force have a complete checkpoint
     // and cover restore path
+    println("准备测试testFailOverAndRestore")
     env.enableCheckpointing(100, CheckpointingMode.EXACTLY_ONCE)
     FailingCollectionSource.reset()
 

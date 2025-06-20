@@ -210,6 +210,7 @@ public class StreamingDeltaJoinOperator
                         this::emitWatermark,
                         entry -> {
                             entry.emitResult(timestampedCollector);
+                            System.out.println("totalInflightNum-1");
                             totalInflightNum.decrementAndGet();
                         },
                         (entry) -> {
@@ -268,6 +269,7 @@ public class StreamingDeltaJoinOperator
         // 1. aec metrics
         asyncExecutionController.registerMetrics(getRuntimeContext().getMetricGroup());
         // 2. delta-join operator metrics
+        System.out.println("准备初始化totalInflightNum");
         getRuntimeContext()
                 .getMetricGroup()
                 .gauge(METRIC_DELTA_JOIN_OP_TOTAL_IN_FLIGHT_NUM, totalInflightNum::get);
@@ -333,13 +335,16 @@ public class StreamingDeltaJoinOperator
                     capacity);
             mailboxExecutor.yield();
         }
+        System.out.println("totalInflightNum+1");
         totalInflightNum.incrementAndGet();
     }
 
     private void processElement(StreamRecord<RowData> element, int inputIndex) throws Exception {
+        System.out.println("准备执行processElement");
         Preconditions.checkArgument(
                 RowKind.INSERT == element.getValue().getRowKind(),
                 "Currently, delta join only supports to consume append only stream.");
+        System.out.println("准备执行tryProcess");
         tryProcess();
         StreamRecord<RowData> record;
         boolean isLeft = isLeft(inputIndex);
@@ -359,9 +364,11 @@ public class StreamingDeltaJoinOperator
 
     @SuppressWarnings("unchecked")
     private void triggerRecoveryProcess() throws Exception {
+        System.out.println("准备执行triggerRecoveryProcess");
         if (recoveredStreamElements != null) {
             for (Tuple4<StreamElement, StreamElement, StreamElement, Integer> tuple :
                     recoveredStreamElements.get()) {
+                System.out.println("准备执行tryProcess");
                 tryProcess();
                 int inputIndex = Objects.requireNonNull(tuple.f3);
                 if (isLeft(inputIndex)) {
@@ -442,6 +449,7 @@ public class StreamingDeltaJoinOperator
     }
 
     private boolean allInflightFinished() {
+        System.out.println("正在判断totalInflightNum是否为0，totalInflightNum: " + totalInflightNum.get());
         return totalInflightNum.get() == 0;
     }
 
