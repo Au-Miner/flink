@@ -64,6 +64,7 @@ public class RecordsBuffer<ELEMENT, KEY> {
     public void enqueueRecord(KEY key, ELEMENT record) {
         blockingBuffer.computeIfAbsent(key, k -> new LinkedList<>()).add(record);
         blockingSize++;
+        System.out.println("此时要通过enqueueRecord添加一条数据，此时blockingSize大小为: " + blockingSize);
     }
 
     public Optional<ELEMENT> pop(KEY key) {

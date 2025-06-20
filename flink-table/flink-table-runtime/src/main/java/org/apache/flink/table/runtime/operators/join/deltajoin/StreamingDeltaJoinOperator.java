@@ -210,8 +210,8 @@ public class StreamingDeltaJoinOperator
                         this::emitWatermark,
                         entry -> {
                             entry.emitResult(timestampedCollector);
-                            System.out.println("totalInflightNum-1");
                             totalInflightNum.decrementAndGet();
+                            System.out.println("准备发送一条数据，totalInflightNum-1，此时totalInflightNum的值为: " + totalInflightNum.get());
                         },
                         (entry) -> {
                             checkState(
@@ -335,8 +335,8 @@ public class StreamingDeltaJoinOperator
                     capacity);
             mailboxExecutor.yield();
         }
-        System.out.println("totalInflightNum+1");
         totalInflightNum.incrementAndGet();
+        System.out.println("totalInflightNum+1，此时totalInflightNum的值为:" + totalInflightNum.get());
     }
 
     private void processElement(StreamRecord<RowData> element, int inputIndex) throws Exception {
@@ -364,7 +364,7 @@ public class StreamingDeltaJoinOperator
 
     @SuppressWarnings("unchecked")
     private void triggerRecoveryProcess() throws Exception {
-        System.out.println("准备执行triggerRecoveryProcess");
+        System.out.println("准备执行恢复triggerRecoveryProcess");
         if (recoveredStreamElements != null) {
             for (Tuple4<StreamElement, StreamElement, StreamElement, Integer> tuple :
                     recoveredStreamElements.get()) {
@@ -477,7 +477,9 @@ public class StreamingDeltaJoinOperator
 
     public void waitInFlightInputsFinished() throws InterruptedException {
         while (!allInflightFinished()) {
+            System.out.println("等待发送mailbox");
             mailboxExecutor.yield();
+            System.out.println("等待完毕");
         }
     }
 
@@ -591,6 +593,7 @@ public class StreamingDeltaJoinOperator
 
         private void processInMailbox(Collection<RowData> results) {
             // move further processing into the mailbox thread
+            System.out.println("准备发送mailbox");
             mailboxExecutor.execute(
                     () -> processResults(results),
                     "Result in AsyncWaitOperator of input %s",
