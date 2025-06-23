@@ -32,9 +32,11 @@ import org.apache.flink.streaming.util.TestHarnessUtil;
 import org.apache.flink.table.runtime.operators.TableKeyedAsyncWaitOperator;
 import org.apache.flink.table.runtime.operators.TableKeyedAsyncWaitOperatorFactory;
 import org.apache.flink.table.runtime.operators.join.lookup.keyordered.Epoch;
+import org.apache.flink.table.runtime.operators.join.lookup.keyordered.EpochManager;
 import org.apache.flink.table.runtime.operators.join.lookup.keyordered.TableAsyncExecutionController;
 import org.apache.flink.util.ExceptionUtils;
 
+import org.junit.Assert;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -303,6 +305,7 @@ public class TableKeyedAsyncWaitOperatorTest {
         }
     }
 
+    @SuppressWarnings("checkstyle:RegexpSingleline")
     @Test
     public void testSnapshotAndRestore() throws Exception {
         LazyAsyncFunction testLazyAsyncFunction = new LazyAsyncFunction();
@@ -337,35 +340,113 @@ public class TableKeyedAsyncWaitOperatorTest {
                 expected,
                 testHarness.getOutput(),
                 new StreamRecordComparator());
-        testHarness.close();
 
         testLazyAsyncFunction = new LazyAsyncFunction();
         testHarness = createKeyedTestHarness(testLazyAsyncFunction, TIMEOUT, 10);
 
         testHarness.initializeState(snapshot);
         testHarness.open();
+        TableKeyedAsyncWaitOperator<Integer, Integer, Integer> operator =
+                (TableKeyedAsyncWaitOperator<Integer, Integer, Integer>)
+                        testHarness.getOperator();
+        TableAsyncExecutionController<Integer, Integer, Integer> aec =
+                operator.getAsyncExecutionController();
+        testLazyAsyncFunction.countDown();
+        int ongoingRecordCount = aec.getActiveEpoch().getOngoingRecordCount();
+//        System.out.println("ongoingRecordCount: " + ongoingRecordCount);
+        testHarness.processWatermark(Long.MAX_VALUE);
+
+        int outputQueueSize = aec.getActiveEpoch().getOutputQueueSize();
+//        System.out.println("outputQueueSize: " + outputQueueSize);
+
+        ongoingRecordCount = aec.getActiveEpoch().getOngoingRecordCount();
+//        System.out.println("ongoingRecordCount: " + ongoingRecordCount);
 
         testHarness.processElement(new StreamRecord<>(5, initialTime + 5));
         testHarness.processElement(new StreamRecord<>(6, initialTime + 6));
         testHarness.processElement(new StreamRecord<>(7, initialTime + 7));
         testHarness.processElement(new StreamRecord<>(8, initialTime + 8));
+        ongoingRecordCount = aec.getActiveEpoch().getOngoingRecordCount();
+//        System.out.println("ongoingRecordCount: " + ongoingRecordCount);
 
-        ConcurrentLinkedQueue<Object> expectedOutput = new ConcurrentLinkedQueue<>();
-        expectedOutput.add(new StreamRecord<>(1, initialTime + 1));
-        expectedOutput.add(new StreamRecord<>(2, initialTime + 2));
-        expectedOutput.add(new StreamRecord<>(3, initialTime + 3));
-        expectedOutput.add(new StreamRecord<>(4, initialTime + 4));
-        expectedOutput.add(new StreamRecord<>(5, initialTime + 5));
-        expectedOutput.add(new StreamRecord<>(6, initialTime + 6));
-        expectedOutput.add(new StreamRecord<>(7, initialTime + 7));
-        expectedOutput.add(new StreamRecord<>(8, initialTime + 8));
-
-        testLazyAsyncFunction.countDown();
+        expected.add(new Watermark(Long.MAX_VALUE));
+        expected.add(new StreamRecord<>(5, initialTime + 5));
+        expected.add(new StreamRecord<>(6, initialTime + 6));
+        expected.add(new StreamRecord<>(7, initialTime + 7));
+        expected.add(new StreamRecord<>(8, initialTime + 8));
+        System.out.println("execute endInput");
         testHarness.endInput();
+        ongoingRecordCount = aec.getActiveEpoch().getOngoingRecordCount();
+//        System.out.println("ongoingRecordCount: " + ongoingRecordCount);
+//        System.out.println("expected: " + expected);
+//        System.out.println("testHarness.getOutput(): " + testHarness.getOutput());
 
         TestHarnessUtil.assertOutputEqualsSorted(
                 "StateAndRestored Test Output was not correct.",
-                expectedOutput,
+                expected,
+                testHarness.getOutput(),
+                new StreamRecordComparator());
+        testHarness.close();
+    }
+
+    @Test
+    public void testWql() throws Exception {
+        LazyAsyncFunction testLazyAsyncFunction = new LazyAsyncFunction();
+        KeyedOneInputStreamOperatorTestHarness<Integer, Integer, Integer> testHarness =
+                createKeyedTestHarness(testLazyAsyncFunction, TIMEOUT, 1000);
+        testHarness.open();
+        TableKeyedAsyncWaitOperator<Integer, Integer, Integer> operator =
+                (TableKeyedAsyncWaitOperator<Integer, Integer, Integer>)
+                        testHarness.getOperator();
+        TableAsyncExecutionController<Integer, Integer, Integer> aec =
+                operator.getAsyncExecutionController();
+        testLazyAsyncFunction.countDown();
+        final long initialTime = 0L;
+
+        testHarness.processElement(new StreamRecord<>(1, initialTime + 1));
+        testHarness.processElement(new StreamRecord<>(2, initialTime + 2));
+        testHarness.processElement(new StreamRecord<>(3, initialTime + 3));
+        testHarness.processElement(new StreamRecord<>(4, initialTime + 4));
+        testHarness.processWatermark(1000);
+
+        if (unwrapEpoch(testHarness, Long.MIN_VALUE).isPresent()) {
+            System.out.println("ongoingRecordCount in MIN_VALUE: " + unwrapEpoch(testHarness, Long.MIN_VALUE).get().getOngoingRecordCount());
+        }
+        if (unwrapEpoch(testHarness, 1000).isPresent()) {
+            System.out.println("ongoingRecordCount in 1000: " + unwrapEpoch(testHarness, 1000).get().getOngoingRecordCount());
+        }
+        testHarness.processElement(new StreamRecord<>(5, initialTime + 5));
+        testHarness.processElement(new StreamRecord<>(6, initialTime + 6));
+        testHarness.processElement(new StreamRecord<>(7, initialTime + 7));
+        testHarness.processElement(new StreamRecord<>(8, initialTime + 8));
+        testHarness.processWatermark(2000);
+        Thread.sleep(2000);
+        if (unwrapEpoch(testHarness, Long.MIN_VALUE).isPresent()) {
+            System.out.println("ongoingRecordCount in MIN_VALUE: " + unwrapEpoch(testHarness, Long.MIN_VALUE).get().getOngoingRecordCount());
+        }
+        if (unwrapEpoch(testHarness, 1000).isPresent()) {
+            System.out.println("ongoingRecordCount in 1000: " + unwrapEpoch(testHarness, 1000).get().getOngoingRecordCount());
+        }
+        System.out.println("execute endInput");
+        testHarness.endInput();
+        assertTrue(unwrapEpoch(testHarness, Long.MIN_VALUE).isEmpty());
+        assertTrue(unwrapEpoch(testHarness, 1000).isEmpty());
+
+        ConcurrentLinkedQueue<Object> expected = new ConcurrentLinkedQueue<>();
+        expected.add(new StreamRecord<>(1, initialTime + 1));
+        expected.add(new StreamRecord<>(2, initialTime + 2));
+        expected.add(new StreamRecord<>(3, initialTime + 3));
+        expected.add(new StreamRecord<>(4, initialTime + 4));
+        expected.add(new Watermark(1000));
+        expected.add(new StreamRecord<>(5, initialTime + 5));
+        expected.add(new StreamRecord<>(6, initialTime + 6));
+        expected.add(new StreamRecord<>(7, initialTime + 7));
+        expected.add(new StreamRecord<>(8, initialTime + 8));
+        expected.add(new Watermark(2000));
+
+        TestHarnessUtil.assertOutputEqualsSorted(
+                "StateAndRestored Test Output was not correct.",
+                expected,
                 testHarness.getOutput(),
                 new StreamRecordComparator());
         testHarness.close();
@@ -482,5 +563,20 @@ public class TableKeyedAsyncWaitOperatorTest {
         Map<Integer, Watermark> actualWatermarks = extractWatermarks.apply(actualList);
 
         assertThat(actualWatermarks).as(message).isEqualTo(expectedWatermarks);
+    }
+
+    private EpochManager<Integer> unwrapEpochManager(
+            KeyedOneInputStreamOperatorTestHarness<Integer, Integer, Integer> testHarness) {
+        TableKeyedAsyncWaitOperator<Integer, Integer, Integer> operator =
+                (TableKeyedAsyncWaitOperator<Integer, Integer, Integer>) testHarness.getOperator();
+        TableAsyncExecutionController<Integer, Integer, Integer> asyncExecutionController =
+                operator.getAsyncExecutionController();
+        return asyncExecutionController.getEpochManager();
+    }
+
+    private Optional<Epoch<Integer>> unwrapEpoch(
+            KeyedOneInputStreamOperatorTestHarness<Integer, Integer, Integer> testHarness,
+            long targetEpochWatermark) {
+        return unwrapEpochManager(testHarness).getProperEpoch(new Watermark(targetEpochWatermark));
     }
 }

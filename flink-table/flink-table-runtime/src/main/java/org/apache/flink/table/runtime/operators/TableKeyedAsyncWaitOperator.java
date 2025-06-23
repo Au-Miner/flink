@@ -210,6 +210,9 @@ public class TableKeyedAsyncWaitOperator<IN, OUT, KEY>
 
     @Override
     public void processWatermark(Watermark mark) throws Exception {
+//        while (asyncExecutionController.getActiveEpoch().getOngoingRecordCount() > 0) {
+//            mailboxExecutor.yield();
+//        }
         asyncExecutionController.submitWatermark(mark);
     }
 
