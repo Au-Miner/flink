@@ -55,6 +55,7 @@ import org.junit.jupiter.api.MethodOrderer.OrderAnnotation;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.api.TestMethodOrder;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -76,6 +77,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -91,8 +93,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>You can generate a JSON compiled plan and a savepoint for the latest node version by running
  * {@link RestoreTestBase#generateTestSetupFiles(TableTestProgram)} which is disabled by default.
  * The "before restore" data of a sink defines the condition when a stop-with-savepoint should be
- * triggered. You can inspect {@link #registerSinkObserver(List, SinkTestStep, boolean)} to monitor
- * the savepoint progress.
+ * triggered. You can inspect {@link #registerSinkObserver(List, SinkTestStep, boolean, boolean)} to
+ * monitor the savepoint progress.
  *
  * <p><b>Note:</b> The test base uses {@link TableConfigOptions.CatalogPlanCompilation#SCHEMA}
  * because it needs to adjust source and sink properties before and after the restore. Therefore,
@@ -255,6 +257,7 @@ public abstract class RestoreTestBase implements TableTestProgramRunner {
     private void registerSinkObserver(
             final List<CompletableFuture<?>> futures,
             final SinkTestStep sinkTestStep,
+            final boolean ignoreBefore,
             final boolean ignoreAfter) {
         final CompletableFuture<Object> future = new CompletableFuture<>();
         futures.add(future);
@@ -262,8 +265,10 @@ public abstract class RestoreTestBase implements TableTestProgramRunner {
         TestValuesTableFactory.registerLocalRawResultsObserver(
                 tableName,
                 (integer, strings) -> {
-                    final List<String> expected =
-                            new ArrayList<>(sinkTestStep.getExpectedBeforeRestoreAsStrings());
+                    final List<String> expected = new ArrayList<>();
+                    if (!ignoreBefore) {
+                        expected.addAll(sinkTestStep.getExpectedBeforeRestoreAsStrings());
+                    }
                     if (!ignoreAfter) {
                         expected.addAll(sinkTestStep.getExpectedAfterRestoreAsStrings());
                     }
@@ -314,7 +319,7 @@ public abstract class RestoreTestBase implements TableTestProgramRunner {
 
         final List<CompletableFuture<?>> futures = new ArrayList<>();
         for (SinkTestStep sinkTestStep : program.getSetupSinkTestSteps()) {
-            registerSinkObserver(futures, sinkTestStep, true);
+            registerSinkObserver(futures, sinkTestStep, false, true);
             final Map<String, String> options = new HashMap<>();
             options.put("connector", "values");
             options.put("sink-insert-only", "false");
@@ -353,6 +358,7 @@ public abstract class RestoreTestBase implements TableTestProgramRunner {
     @ParameterizedTest
     @MethodSource("createSpecs")
     @Order(1)
+    @Timeout(value = 120, unit = TimeUnit.SECONDS)
     void testRestore(TableTestProgram program, Path planPath, String savepointPath)
             throws Exception {
         final EnvironmentSettings settings = EnvironmentSettings.inStreamingMode();
@@ -412,7 +418,7 @@ public abstract class RestoreTestBase implements TableTestProgramRunner {
 
         for (SinkTestStep sinkTestStep : program.getSetupSinkTestSteps()) {
             if (afterRestoreSource == AfterRestoreSource.INFINITE) {
-                registerSinkObserver(futures, sinkTestStep, false);
+                registerSinkObserver(futures, sinkTestStep, true, false);
             }
             final Map<String, String> options = new HashMap<>();
             options.put("connector", "values");
